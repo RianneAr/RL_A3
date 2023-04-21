@@ -33,7 +33,6 @@ class REINFORCEAgent:
         return model
 
 
-
     def select_action(self, state):
          # Get the action probabilities and choose an action
         probabilities = self.policy_network(state.reshape(1,-1)) #(1, 7x7x2) # get the policy network
@@ -41,17 +40,39 @@ class REINFORCEAgent:
         action_probabilities = tf.nn.softmax(probabilities)  # normalization
         action = tf.random.categorical(probabilities, 1)[0, 0].numpy()  #get the action to perform
 
-        return action, action_probabilities
+        return action, action_probabilities   ###### we need to check that the probs are correct
+
+
+    def trace(self, env):
+
+        trace_rewards = []
+        trace_actions = []
+        trace_states = []
+        trace_probs = []
+        done = False
+        state = env.reset()
+
+        while not done:   #########should we also check for n_timesteps????
+            action, probabilities = self.select_action(state)
+            next_state, reward, done, _ = env.step(action) # Take a step in the environment
+
+            trace_rewards.append(reward)
+            trace_actions.append(action)
+            trace_probs.append(probabilities)
+            state = next_state
+            trace_states.append(state)
+    
+        return trace_rewards, trace_actions, trace_states, trace_probs
 
 
 
-    def update_policy(self, episode_rewards, episode_actions, episode_states):
+    def trace_gradients(self, rewards, actions, states):
         
         # Compute the discounted cumulative rewards for each time step of the episode
-        cumulative_reward = np.zeros_like(episode_rewards)
+        cumulative_reward = np.zeros_like(rewards)
         G = 0
-        for t in reversed(range(len(episode_rewards))):
-            G = self.gamma * G + episode_rewards[t]
+        for t in reversed(range(len(rewards))):
+            G = self.gamma * G + rewards[t]
             cumulative_reward[t] = G
 
         # Normalize the cumulative_reward
@@ -60,24 +81,21 @@ class REINFORCEAgent:
         # Compute the policy gradient estimate
         with tf.GradientTape() as tape:
             loss = 0
-            for t in range(len(episode_states)): # t ... T-1
-                state = episode_states[t]
-                action = episode_actions[t]
-                cumulative_reward_t = cumulative_reward[t]
-
-                probabilities = self.policy_network(state.reshape(1,-1))  #should we be using the stored probs?
-                log_probability = tf.math.log(probabilities[0,action])
+            for t in range(len(states)): # t ... T-1
+                probabilities = self.policy_network(states[t].reshape(1,-1))  #should we be using the stored probs?
+                log_probability = tf.math.log(probabilities[0,actions[t]])
 
                 entropy = -tf.reduce_sum(probabilities * tf.math.log(probabilities))
-                loss += -log_probability * cumulative_reward_t - self.entropy_coefficient * entropy
+                loss += -log_probability * cumulative_reward[t] - self.entropy_coefficient * entropy
 
             gradients = tape.gradient(loss, self.policy_network.trainable_variables)
 
-        # Update the policy parameters
-        self.optimizer.apply_gradients(zip(gradients, self.policy_network.trainable_variables))
+        return gradients
+        # # Update the policy parameters
+        # self.optimizer.apply_gradients(zip(gradients, self.policy_network.trainable_variables))
 
 
-def REINFORCE(max_epochs, learning_rate, gamma, entropy_coefficient):
+def REINFORCE(max_epochs, M, learning_rate, gamma, entropy_coefficient):
     ''' runs a single repetition of an REINFORCE agent
     Return: rewards, a vector with the observed rewards at each timestep ''' 
     
@@ -96,34 +114,33 @@ def REINFORCE(max_epochs, learning_rate, gamma, entropy_coefficient):
 
     # Train the agent using REINFORCE with entropy regularization
     for episode in range(max_epochs):
-        state = env.reset()
-
-        # we will store the trace
+        # we will store the traces
         episode_rewards = []
-        episode_actions = []
-        episode_states = []
-        episode_probs = []
+        # episode_actions = []
+        # episode_states = []
+        # episode_probs = []
 
-        done = False
+        gradients_l = []
         
-        # get the whole trace following policy
-        while not done:   #########should we also check for n_timesteps????
-           
-            action, probabilities = pi.select_action(state)
-
-            # Take a step in the environment
-            next_state, reward, done, _ = env.step(action)
+        # DO M TRACES
+        for m in range(M):
+            # get the whole trace following policy
+            trace_rewards, trace_actions, trace_states, trace_probs = pi.trace(env)
 
             # save trace
-            episode_rewards.append(reward)
-            episode_actions.append(action)
-            episode_probs.append(probabilities)
-            state = next_state
-            episode_states.append(state)
+            episode_rewards.append(trace_rewards)
+            # episode_actions.append(trace_actions)
+            # episode_probs.append(trace_probs)
+            # episode_states.append(trace_states)
 
-        
+            grads = pi.trace_gradients(trace_rewards, trace_actions, trace_states)
+            gradients_l.append(grads)   
+
+        ##################### should we averageee????????
+        gradients = [tf.reduce_sum(tensors, axis=0) for tensors in zip(*gradients_l)]
+
         # Update the policy network using REINFORCE with entropy regularization
-        pi.update_policy(episode_rewards, episode_actions, episode_states)
+        pi.optimizer.apply_gradients(zip(gradients, pi.policy_network.trainable_variables))
 
         rewards.append(episode_rewards)
 
@@ -133,6 +150,7 @@ def REINFORCE(max_epochs, learning_rate, gamma, entropy_coefficient):
 def test():
     #parameters
     max_epochs = 10
+    M = 3  # number of traces
     learning_rate = 0.001
     gamma = 0.99
     entropy_coefficient = 0.01  #alpha
@@ -140,7 +158,7 @@ def test():
     # Plotting parameters
     # plot = True
 
-    rewards = REINFORCE(max_epochs, learning_rate, gamma, entropy_coefficient)
+    rewards = REINFORCE(max_epochs, M, learning_rate, gamma, entropy_coefficient)
     print("Obtained rewards: {}".format(rewards))
     
 if __name__ == '__main__':
