@@ -5,6 +5,40 @@ from tensorflow import keras
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.optimizers import Adam
+import matplotlib.pyplot as plt
+from scipy.signal import savgol_filter
+
+def smooth(y, window, poly=1):
+    '''
+    y: vector to be smoothed 
+    window: size of the smoothing window '''
+    return savgol_filter(y,window,poly)
+
+class LearningCurvePlot:
+    def __init__(self,title=None):
+        self.fig,self.ax = plt.subplots()
+        self.ax.set_xlabel('Time')
+        self.ax.set_ylabel('Reward')      
+        if title is not None:
+            self.ax.set_title(title)
+        
+    def add_curve(self,y,label=None):
+        ''' y: vector of average reward results
+        label: string to appear as label in plot legend '''
+        if label is not None:
+            self.ax.plot(y,label=label)
+        else:
+            self.ax.plot(y)
+    
+    def set_ylim(self,lower,upper):
+        self.ax.set_ylim([lower,upper])
+
+    def add_hline(self,height,label):
+        self.ax.axhline(height,ls='--',c='k',label=label)
+
+    def save(self,name='test.png'):
+        ''' name: string for filename of saved figure '''
+        self.fig.savefig(name,dpi=300)
 
 class REINFORCEAgent:
     def __init__(self, state_size, action_size, learning_rate, gamma, entropy_coefficient):
@@ -34,13 +68,14 @@ class REINFORCEAgent:
 
 
     def select_action(self, state):
-         # Get the action probabilities and choose an action
+        
+        # Get the action probabilities and choose an action
         probabilities = self.policy_network(state.reshape(1,-1)) #(1, 7x7x2) # get the policy network
-
-        action_probabilities = tf.nn.softmax(probabilities)  # normalization
+        
+        # action_probabilities = tf.nn.softmax(probabilities)  # normalization
         action = tf.random.categorical(probabilities, 1)[0, 0].numpy()  #get the action to perform
 
-        return action, action_probabilities   ###### we need to check that the probs are correct
+        return action, probabilities   ###### we need to check that the probs are correct
 
 
     def trace(self, env):
@@ -126,9 +161,9 @@ def REINFORCE(max_epochs, M, learning_rate, gamma, entropy_coefficient):
         for m in range(M):
             # get the whole trace following policy
             trace_rewards, trace_actions, trace_states, trace_probs = pi.trace(env)
-
+            # print('CUMMULATIVE REWARDS OF TRACE', m, sum(trace_rewards))
             # save trace
-            episode_rewards.append(trace_rewards)
+            episode_rewards.append(sum(trace_rewards))
             # episode_actions.append(trace_actions)
             # episode_probs.append(trace_probs)
             # episode_states.append(trace_states)
@@ -137,29 +172,36 @@ def REINFORCE(max_epochs, M, learning_rate, gamma, entropy_coefficient):
             gradients_l.append(grads)   
 
         ##################### should we averageee????????
-        gradients = [tf.reduce_sum(tensors, axis=0) for tensors in zip(*gradients_l)]
+        gradients = [tf.reduce_mean(tensors, axis=0) for tensors in zip(*gradients_l)]
 
         # Update the policy network using REINFORCE with entropy regularization
         pi.optimizer.apply_gradients(zip(gradients, pi.policy_network.trainable_variables))
 
-        rewards.append(episode_rewards)
+        if episode%10 == 0:
+            print('episode', episode, 'with rewards:', episode_rewards)
+        rewards.append(np.mean(episode_rewards))
 
     return rewards
 
 
 def test():
     #parameters
-    max_epochs = 10
-    M = 3  # number of traces
+    max_epochs = 1000
+    M = 2  # number of traces
     learning_rate = 0.001
     gamma = 0.99
     entropy_coefficient = 0.01  #alpha
 
+    results = REINFORCE(max_epochs, M, learning_rate, gamma, entropy_coefficient)
+    # print("Obtained rewards: {}".format(np.unique(rewards)))
+    print(results)
     # Plotting parameters
-    # plot = True
+    # smoothing_window = 51
 
-    rewards = REINFORCE(max_epochs, M, learning_rate, gamma, entropy_coefficient)
-    print("Obtained rewards: {}".format(rewards))
+    Plot = LearningCurvePlot(title = 'Learning curve')
+    smoothres = smooth(results, 3)
+    Plot.add_curve(results, label='aa')
+    Plot.save('reinforce.png')
     
 if __name__ == '__main__':
     test()
