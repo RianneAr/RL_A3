@@ -87,15 +87,15 @@ class REINFORCEAgent:
         done = False
         state = env.reset()
 
-        while not done:   #########should we also check for n_timesteps????
+        while not done:
             action, probabilities = self.select_action(state)
             next_state, reward, done, _ = env.step(action) # Take a step in the environment
 
             trace_rewards.append(reward)
             trace_actions.append(action)
             trace_probs.append(probabilities)
-            state = next_state
             trace_states.append(state)
+            state = next_state
     
         return trace_rewards, trace_actions, trace_states, trace_probs
 
@@ -171,7 +171,7 @@ def REINFORCE(max_epochs, M, learning_rate, gamma, entropy_coefficient):
             grads = pi.trace_gradients(trace_rewards, trace_actions, trace_states)
             gradients_l.append(grads)   
 
-        ##################### should we averageee????????
+        # average
         gradients = [tf.reduce_mean(tensors, axis=0) for tensors in zip(*gradients_l)]
 
         # Update the policy network using REINFORCE with entropy regularization
