@@ -102,44 +102,27 @@ class ActorCriticAgent:
         return trace_rewards, trace_actions, trace_states #, trace_probs
 
 
-    def gradient_policy(self, states, actions, rewards, q, learning_rate):   #################################
-        
+    def gradient_policy(self, states, actions, q_hat, learning_rate):  
         with tf.GradientTape() as tape:
             loss = 0
             for t in range(len(states)): # t ... T-1
                 probabilities = self.policy_network(states[t].reshape(1,-1))  #should we be using the stored probs?
-                log_probabilities = tf.math.log(probabilities)
+                log_probability = tf.math.log(probabilities[0, actions[t]])
             
-                entropy = -tf.reduce_sum(probabilities * log_probabilities)
-                
-                loss += -log_probabilities[0,actions[t]] 
-                loss *= q[t] 
-                loss -= self.entropy_coefficient * entropy
-
-            loss *= learning_rate   ####
+                entropy = tf.reduce_sum(probabilities * tf.math.log(probabilities[0]))
+                loss += -q_hat[t] * log_probability - self.entropy_coefficient * entropy
 
             gradients = tape.gradient(loss, self.policy_network.trainable_variables)
-
+            
         return gradients
 
-
-
-    def gradient_value(self, states, actions, rewards, q, learning_rate):   #################################
-        
+    def gradient_value(self, states, actions, rewards, q, learning_rate):   
         with tf.GradientTape() as tape:
             loss = 0
-            for t in range(len(states)): # t ... T-1
-
-                # VALUE CAN BE NEGATIVE SOMETIMES SO THE LOG IS NAN -> take abs()
-
+            for t in range(len(states)):
                 value = abs(self.value_network(states[t].reshape(1,-1)))
-                subs = (q[t]-value)**2
+                loss += (q[t]-value)**2
 
-                entropy = -(value * tf.math.log(value)) #tf.reduce_sum
-
-                loss += subs - self.entropy_coefficient * entropy
-
-            loss *= learning_rate
             gradients = tape.gradient(loss, self.value_network.trainable_variables)
 
         return gradients
@@ -161,7 +144,6 @@ def actor_critic(max_epochs, M, learning_rate, gamma, entropy_coefficient, n):
 
     # Train the agent using REINFORCE with entropy regularization
     for episode in range(max_epochs):
-        print('EPISODE', episode)
         # we will store the traces
         episode_rewards = []
 
@@ -172,42 +154,37 @@ def actor_critic(max_epochs, M, learning_rate, gamma, entropy_coefficient, n):
         for m in range(M):
             # get the whole trace following policy
             trace_rewards, trace_actions, trace_states = pi.trace(env)
-            # print('CUMMULATIVE REWARDS OF TRACE', m, sum(trace_rewards))
-            # save trace
             episode_rewards.append(sum(trace_rewards))
-            
-
+            print("Episode {} trace nr: {}, avg_ rewards: {}, nr of 1s: {}, episode length: {}".format(m, episode, sum(trace_rewards), trace_rewards.count(1), len(trace_rewards)))
+        
             # BOOTSTRAPPING  
             q_hat = []
             for t in range(len(trace_states)):
                 if t+n < len(trace_states):
+                    cumulative_reward = sum([gamma ** k * trace_rewards[t+k] for k in range(0, n-1)])
                     val = pi.value_network(trace_states[t+n].reshape(1,-1)) 
-                    q = []
-                    for k in range(n):
-                        q.append(gamma**k * trace_rewards[t+k] + (gamma**n)*val)
-                    q_hat.append(tf.reduce_sum(q, axis=0))
-
+                    q = cumulative_reward + gamma **n * val
+                    q_hat.append(q)
                 else:
-                    q_hat.append(0)    ################
-
+                    q_hat.append(0)
 
             # compute gradients for every trace
-            grads_p = pi.gradient_policy(trace_states, trace_actions, trace_rewards, q_hat, learning_rate)
+            grads_p = pi.gradient_policy(trace_states, trace_actions, q_hat, learning_rate)
             gradients_policy.append(grads_p) 
 
             grads_v = pi.gradient_value(trace_states, trace_actions, trace_rewards, q_hat, learning_rate)
             gradients_value.append(grads_v)  
 
+        print()
         # # averaging
         grad_policy = [tf.reduce_mean(tensors, axis=0) for tensors in zip(*gradients_policy)]
         grad_value = [tf.reduce_mean(tensors, axis=0) for tensors in zip(*gradients_value)]
-
+        
+        #experiment here with: actor: reduce sum
         # Update the policy and value network with averages
         pi.optimizer_policy.apply_gradients(zip(grad_policy, pi.policy_network.trainable_variables))
         pi.optimizer_value.apply_gradients(zip(grad_value, pi.value_network.trainable_variables))
-
-        if episode%10 == 0:
-            print('episode', episode, 'with rewards:', episode_rewards)
+        
         rewards.append(np.mean(episode_rewards))
 
     return rewards
@@ -215,7 +192,7 @@ def actor_critic(max_epochs, M, learning_rate, gamma, entropy_coefficient, n):
 
 def test():
     #parameters
-    max_epochs = 10
+    max_epochs = 200
     M = 2  # number of traces
     learning_rate = 0.001
     gamma = 0.99
@@ -226,10 +203,10 @@ def test():
     # print("Obtained rewards: {}".format(np.unique(rewards)))
     print(results)
     # Plotting parameters
-    # smoothing_window = 51
+    smoothing_window = 101
 
     Plot = LearningCurvePlot(title = 'Learning curve')
-    smoothres = smooth(results, 3)
+    smoothres = smooth(results, smoothing_window)
     Plot.add_curve(results, label='aa')
     Plot.save('actor_critic.png')
     
