@@ -58,14 +58,12 @@ class ActorCriticAgent:
             # The last layer has the size of actions space  '''
        
         policy_network = tf.keras.models.Sequential([
-            tf.keras.layers.BatchNormalization(synchronized=True),
             tf.keras.layers.Dense(64, activation='relu', input_shape=(np.product(self.state_size),)),
             tf.keras.layers.Dense(32, activation='relu'),
             tf.keras.layers.Dense(self.action_size, activation='softmax')
         ])
 
         value_network = tf.keras.models.Sequential([
-            tf.keras.layers.BatchNormalization(synchronized=True),
             tf.keras.layers.Dense(64, activation='relu', input_shape=(np.product(self.state_size),)),
             tf.keras.layers.Dense(32, activation='relu'),
             tf.keras.layers.Dense(1, activation='linear')
@@ -120,22 +118,22 @@ class ActorCriticAgent:
                 entropy = tf.reduce_sum(probabilities * tf.math.log(probabilities[0]))
                 loss += -advantage[t] * log_probability - self.entropy_coefficient * entropy
 
-            loss /= len(states)
             print("Policy loss: ", loss)   
             gradients = tape.gradient(loss, self.policy_network.trainable_variables)     
             
         return gradients
 
-    def gradient_value(self, states, advantage):   
+    def gradient_value(self, states, q):   
         with tf.GradientTape() as tape:
             loss = 0
 
             for t in range(len(states)):
                 value = self.value_network(states[t].reshape(1,-1))
-                loss += (advantage[t]-value)**2
-
-            loss /= len(states)
+                loss += (q[t]-value)**2
+                
+            print("Value loss: ", loss)   
             gradients = tape.gradient(loss, self.value_network.trainable_variables)
+
         return gradients
 
 
@@ -168,26 +166,26 @@ def actor_critic(max_epochs, M, learning_rate, gamma, entropy_coefficient, n):
 
             episode_rewards.append(sum(trace_rewards))
             print("Episode {} trace nr: {}, avg_ rewards: {}, nr of 1s: {}, episode length: {}".format(m, episode, sum(trace_rewards), trace_rewards.count(1), len(trace_rewards)))
-        
-            G = 0        
-            cumulative_reward = np.zeros_like(trace_rewards)
-            for t in reversed(range(len(trace_rewards))):
-                G = sum([gamma ** i *trace_rewards[i] for i in range(t, len(trace_rewards))])
-                cumulative_reward[t] = G
-        
+               
             # Baseline subtraction 
             advantage = []
+            
             for t in range(len(trace_states)):
+                cumulative_reward = 0
+                
+                if t+n < len(trace_states):
+                    reward = sum([gamma ** k * trace_rewards[t+k] for k in range(0, n-1)])
+                    val = pi.value_network(trace_states[t+n].reshape(1,-1))
+                    cumulative_reward = reward + gamma **n * val
+                    
                 val = pi.value_network(trace_states[t].reshape(1, -1))
-                a = cumulative_reward[t] - val
+                a = cumulative_reward - val
                 advantage.append(a)
 
             # compute gradients for every trace
             grads_p = pi.gradient_policy(trace_states, trace_actions, advantage, learning_rate)
             gradients_policy.append(grads_p) 
 
-            #we use cumulative_reward to compute the value network gradient because the "tape" function requires more info
-            #than just sending the advantage value
             grads_v = pi.gradient_value(trace_states, advantage)
             gradients_value.append(grads_v)  
 
@@ -224,7 +222,7 @@ def test():
     Plot = LearningCurvePlot(title = 'Learning curve')
     smoothres = smooth(results, smoothing_window)
     Plot.add_curve(results, label='aa')
-    Plot.save('actor_critic_baseline_lr0.01.png')
+    Plot.save('actor_critic_bb.png')
     
 if __name__ == '__main__':
     test()

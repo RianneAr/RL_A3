@@ -58,24 +58,25 @@ class ActorCriticAgent:
             # The last layer has the size of actions space  '''
        
         policy_network = tf.keras.models.Sequential([
-            tf.keras.layers.Dense(32, activation='relu', input_shape=(np.product(self.state_size),)),
-            tf.keras.layers.Dense(16, activation='relu'),
+            tf.keras.layers.BatchNormalization(synchronized=True),
+            tf.keras.layers.Dense(64, activation='relu', input_shape=(np.product(self.state_size),)),
+            tf.keras.layers.Dense(64, activation='relu'),
             tf.keras.layers.Dense(self.action_size, activation='softmax')
         ])
 
         value_network = tf.keras.models.Sequential([
-            tf.keras.layers.Dense(32, activation='relu', input_shape=(np.product(self.state_size),)),
-            tf.keras.layers.Dense(16, activation='relu'),
+            tf.keras.layers.BatchNormalization(synchronized=True),
+            tf.keras.layers.Dense(64, activation='relu', input_shape=(np.product(self.state_size),)),
+            tf.keras.layers.Dense(64, activation='relu'),
             tf.keras.layers.Dense(1, activation='linear')
         ])
 
-        policy_network.compile(loss='mse', optimizer=self.optimizer_policy)
-        value_network.compile(loss='mse', optimizer=self.optimizer_value)
+        policy_network.compile(optimizer=self.optimizer_policy)
+        value_network.compile(optimizer=self.optimizer_value)
 
         return policy_network, value_network
 
     def select_action(self, state):
-        
         # Get the action probabilities and choose an action
         probabilities = self.policy_network(state.reshape(1,-1)) #(1, 7x7x2) # get the policy network
         action = tf.random.categorical(probabilities, 1)[0, 0].numpy()  #get the action to perform
@@ -93,7 +94,14 @@ class ActorCriticAgent:
 
         while not done:
             action, probabilities = self.select_action(state)
-            next_state, reward, done, _ = env.step(action)#action) # Take a step in the environment
+            
+            try:
+              next_state, reward, done, _ = env.step(action)
+            except:
+              print("")
+              print(action, probabilities)
+              print("")
+              continue
             trace_rewards.append(reward)
             trace_actions.append(action)
             trace_states.append(state)
@@ -106,12 +114,14 @@ class ActorCriticAgent:
         with tf.GradientTape() as tape:
             loss = 0
             for t in range(len(states)): # t ... T-1
-                probabilities = self.policy_network(states[t].reshape(1,-1))  #should we be using the stored probs?
+                probabilities = self.policy_network(states[t].reshape(1,-1)) 
                 log_probability = tf.math.log(probabilities[0, actions[t]])
-            
+
                 entropy = tf.reduce_sum(probabilities * tf.math.log(probabilities[0]))
                 loss += -q_hat[t] * log_probability - self.entropy_coefficient * entropy
-
+              
+            loss /= len(states)
+            print("Policy loss: ", loss)    
             gradients = tape.gradient(loss, self.policy_network.trainable_variables)
             
         return gradients
@@ -123,6 +133,8 @@ class ActorCriticAgent:
                 value = abs(self.value_network(states[t].reshape(1,-1)))
                 loss += (q[t]-value)**2
 
+            loss /= len(states)
+            print("Value loss: ", loss)    
             gradients = tape.gradient(loss, self.value_network.trainable_variables)
 
         return gradients
@@ -133,10 +145,8 @@ def actor_critic(max_epochs, M, learning_rate, gamma, entropy_coefficient, n):
     Return: rewards, a vector with the observed rewards at each timestep ''' 
     
     rewards = []
-
     # Initialize environment and Q-array
     env = Catch()
-
     state_size = env.observation_space.shape # (7,7,2)
     action_size = env.action_space.n
 
@@ -154,6 +164,7 @@ def actor_critic(max_epochs, M, learning_rate, gamma, entropy_coefficient, n):
         for m in range(M):
             # get the whole trace following policy
             trace_rewards, trace_actions, trace_states = pi.trace(env)
+              
             episode_rewards.append(sum(trace_rewards))
             print("Episode {} trace nr: {}, avg_ rewards: {}, nr of 1s: {}, episode length: {}".format(m, episode, sum(trace_rewards), trace_rewards.count(1), len(trace_rewards)))
         
@@ -162,14 +173,15 @@ def actor_critic(max_epochs, M, learning_rate, gamma, entropy_coefficient, n):
             for t in range(len(trace_states)):
                 if t+n < len(trace_states):
                     cumulative_reward = sum([gamma ** k * trace_rewards[t+k] for k in range(0, n-1)])
-                    val = pi.value_network(trace_states[t+n].reshape(1,-1)) 
+                    val = pi.value_network(trace_states[t+n].reshape(1,-1))
                     q = cumulative_reward + gamma **n * val
                     q_hat.append(q)
                 else:
-                    q_hat.append(0)
-
+                    q_hat.append(0.001)
+                
             # compute gradients for every trace
             grads_p = pi.gradient_policy(trace_states, trace_actions, q_hat, learning_rate)
+
             gradients_policy.append(grads_p) 
 
             grads_v = pi.gradient_value(trace_states, trace_actions, trace_rewards, q_hat, learning_rate)
@@ -193,11 +205,11 @@ def actor_critic(max_epochs, M, learning_rate, gamma, entropy_coefficient, n):
 def test():
     #parameters
     max_epochs = 200
-    M = 2  # number of traces
+    M = 3  # number of traces
     learning_rate = 0.001
-    gamma = 0.99
-    entropy_coefficient = 0.01  #alpha
-    n = 3 #estimation depth
+    gamma = 0.95
+    entropy_coefficient = 0.01  
+    n = 10 #estimation depth
 
     results = actor_critic(max_epochs, M, learning_rate, gamma, entropy_coefficient, n)
     # print("Obtained rewards: {}".format(np.unique(rewards)))
@@ -208,7 +220,7 @@ def test():
     Plot = LearningCurvePlot(title = 'Learning curve')
     smoothres = smooth(results, smoothing_window)
     Plot.add_curve(results, label='aa')
-    Plot.save('actor_critic.png')
+    Plot.save('actor_critic_001.png')
     
 if __name__ == '__main__':
     test()
