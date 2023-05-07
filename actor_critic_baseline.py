@@ -95,13 +95,7 @@ class ActorCriticAgent:
 
         while not done:
             action, probabilities = self.select_action(state)            
-            try:
-              next_state, reward, done, _ = env.step(action)
-            except:
-              print("")
-              print(action, probabilities)
-              print("")
-              continue
+            next_state, reward, done, _ = env.step(action)
             trace_rewards.append(reward)
             trace_actions.append(action)
             trace_states.append(state)
@@ -113,14 +107,18 @@ class ActorCriticAgent:
     def gradient_policy(self, states, actions, advantage, learning_rate):  
         with tf.GradientTape() as tape:
             loss = 0
+            entropy = 0
             for t in range(len(states)): # t ... T-1
                 probabilities = self.policy_network(states[t].reshape(1,-1))  #should we be using the stored probs?
-                log_probability = tf.math.log(probabilities[0, actions[t]])
+                log_probability = tf.math.log(probabilities[0, actions[t]] + 1e-8)
             
-                entropy = tf.reduce_sum(probabilities * tf.math.log(probabilities[0]))
-                loss += -advantage[t] * log_probability - self.entropy_coefficient * entropy
+                entropy += -tf.reduce_sum(probabilities * tf.math.log(probabilities[0] + 1e-8))
+                loss += -advantage[t] * log_probability
 
+            entropy /= len(states)
             loss /= len(states)
+            loss -= self.entropy_coefficient * entropy
+            
             print("Policy loss: ", loss)   
             gradients = tape.gradient(loss, self.policy_network.trainable_variables)     
             
@@ -210,7 +208,7 @@ def test():
     #parameters
     max_epochs = 600
     M = 2  # number of traces
-    learning_rate = 0.0001
+    learning_rate = 0.001
     gamma = 0.99
     entropy_coefficient = 0.01 
     n = 3 #estimation depth
@@ -223,7 +221,7 @@ def test():
 
     Plot = LearningCurvePlot(title = 'Learning curve')
     smoothres = smooth(results, smoothing_window)
-    Plot.add_curve(results, label='aa')
+    Plot.add_curve(smoothres, label='aa')
     Plot.save('actor_critic_baseline_lr0.01.png')
     
 if __name__ == '__main__':

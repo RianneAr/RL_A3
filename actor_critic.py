@@ -94,14 +94,8 @@ class ActorCriticAgent:
 
         while not done:
             action, probabilities = self.select_action(state)
+            next_state, reward, done, _ = env.step(action)
             
-            try:
-              next_state, reward, done, _ = env.step(action)
-            except:
-              print("")
-              print(action, probabilities)
-              print("")
-              continue
             trace_rewards.append(reward)
             trace_actions.append(action)
             trace_states.append(state)
@@ -113,14 +107,17 @@ class ActorCriticAgent:
     def gradient_policy(self, states, actions, q_hat, learning_rate):  
         with tf.GradientTape() as tape:
             loss = 0
+            entropy = 0
             for t in range(len(states)): # t ... T-1
                 probabilities = self.policy_network(states[t].reshape(1,-1)) 
-                log_probability = tf.math.log(probabilities[0, actions[t]])
+                log_probability = tf.math.log(probabilities[0, actions[t]] + 1e-8)
 
-                entropy = tf.reduce_sum(probabilities * tf.math.log(probabilities[0]))
-                loss += -q_hat[t] * log_probability - self.entropy_coefficient * entropy
-              
+                entropy += -tf.reduce_sum(probabilities * tf.math.log(probabilities[0] + 1e-8))
+                loss += q_hat[t] * log_probability 
+            
+            entropy /= len(states)
             loss /= len(states)
+            loss -= self.entropy_coefficient * entropy
             print("Policy loss: ", loss)    
             gradients = tape.gradient(loss, self.policy_network.trainable_variables)
             
@@ -181,7 +178,6 @@ def actor_critic(max_epochs, M, learning_rate, gamma, entropy_coefficient, n):
                 
             # compute gradients for every trace
             grads_p = pi.gradient_policy(trace_states, trace_actions, q_hat, learning_rate)
-
             gradients_policy.append(grads_p) 
 
             grads_v = pi.gradient_value(trace_states, trace_actions, trace_rewards, q_hat, learning_rate)
@@ -204,9 +200,9 @@ def actor_critic(max_epochs, M, learning_rate, gamma, entropy_coefficient, n):
 
 def test():
     #parameters
-    max_epochs = 200
+    max_epochs = 1000
     M = 3  # number of traces
-    learning_rate = 0.001
+    learning_rate = 0.01
     gamma = 0.95
     entropy_coefficient = 0.01  
     n = 10 #estimation depth
@@ -219,8 +215,8 @@ def test():
 
     Plot = LearningCurvePlot(title = 'Learning curve')
     smoothres = smooth(results, smoothing_window)
-    Plot.add_curve(results, label='aa')
-    Plot.save('actor_critic_001.png')
+    Plot.add_curve(smoothres, label='aa')
+    Plot.save('actor_critic_last.png')
     
 if __name__ == '__main__':
     test()

@@ -69,12 +69,15 @@ class REINFORCEAgent:
                 cumulative_reward_t = cumulative_reward[t]
 
                 probabilities = self.policy_network(state.reshape(1,-1))
-                log_probability = tf.math.log(probabilities[0,action])
+                log_probability = tf.math.log(probabilities[0,action] + 1e-8)
                 
-                entropy = tf.reduce_sum(probabilities * tf.math.log(probabilities[0]))
-                
-                loss += -cumulative_reward_t * log_probability - self.entropy_coefficient * entropy
+                entropy = tf.reduce_sum(probabilities * tf.math.log(probabilities[0] + 1e-8))
+                loss += -cumulative_reward_t * log_probability 
 
+            loss /= len(episode_states)
+            entropy /= len(episode_states)
+            loss -= self.entropy_coefficient * entropy
+            print("Policy loss: ", loss)   
             # Update the policy parameters
             gradients = tape.gradient(loss, self.policy_network.trainable_variables)
             
@@ -128,7 +131,7 @@ def REINFORCE(max_epochs, learning_rate, gamma, entropy_coefficient):
         
         # Update the policy network using REINFORCE with entropy regularization
         pi.update_policy(episode_rewards, episode_actions, episode_states)
-
+        print()
         rewards.append(np.mean(episode_rewards))
         print("Episode {} avg_ rewards: {}, nr of 1s: {}, episode length: {}".format(episode, sum(episode_rewards)/len(episode_rewards), episode_rewards.count(1), len(episode_rewards)))
 
